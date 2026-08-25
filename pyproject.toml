@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-artifacts"
+version = "2.8.5"
+description = "Install a team's AI artifacts (skills, guidelines, MCP configs, hooks) into multiple agentic harnesses."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Michał Filek" }]
+keywords = ["ai", "skills", "mcp", "hooks", "agents", "opencode", "claude", "tabnine"]
+# Zero runtime dependencies — standard library only (docs/design/DESIGN.md §4/§15).
+dependencies = []
+
+[project.optional-dependencies]
+# Optional developer tooling. NOT required to run the CLI — the runtime stays
+# zero-dependency. Install with:  pip install -e ".[dev]"
+dev = [
+    # Explicit editable-build prerequisite for Python versions whose venv/ensurepip no longer
+    # bundles setuptools. It is visible only to development/CI, never runtime metadata.
+    "setuptools>=61",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "coverage>=7.6",
+    "wheel>=0.44",
+]
+
+[project.scripts]
+agent-artifacts = "agent_artifacts.cli:main"
+aart = "agent_artifacts.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/M1F1/agent-artifacts"
+Repository = "https://github.com/M1F1/agent-artifacts"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agent_artifacts*"]
+
+[tool.setuptools.package-data]
+agent_artifacts = ["profiles/*.json"]
+
+# --------------------------------------------------------------------------- #
+# Developer tooling (optional — see the `dev` extra). None of this touches the
+# zero-dependency runtime; it only runs when a developer installs `.[dev]` and
+# invokes `make lint` / `make format` / `make typecheck`.
+# --------------------------------------------------------------------------- #
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["build", "dist", ".claude", "*.egg-info", "tests/fixtures"]
+
+[tool.ruff.lint]
+# A deliberately non-disruptive baseline: real-bug detection + import hygiene.
+# `UP` (pyupgrade) is intentionally NOT selected — the codebase deliberately
+# uses typing.List/Dict/Optional. Add "UP" here later to modernize annotations
+# to PEP 585/604 builtin syntax in one sweep.
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    "E501",  # line width is owned by the formatter (`ruff format`), not the linter
+    "E701",  # multiple statements on one line (colon) — used deliberately for terse guards
+]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["agent_artifacts"]
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unused_configs = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[tool.coverage.run]
+branch = true
+source = ["agent_artifacts"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+precision = 2
+fail_under = 82

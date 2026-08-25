@@ -1,0 +1,121 @@
+name: release
+
+# Repeats quality/release gates, builds the offline zero-dependency wheel, and ships it.
+# Triggers:
+#   * a stable vX.Y.Z tag push          -> build + upload as a workflow artifact
+#   * a published GitHub release        -> additionally attach the wheel to the release
+# `scripts/version.py check-tag` is the real gate: it rejects any tag that does not match the
+# source version the release contract governs, so the pattern below stays deliberately broad
+# rather than pinning one release and silently building nothing for the next.
+#
+# Portable to a GitHub Enterprise Server fork by setting repository variables only; every default
+# reproduces the public github.com run.  See docs/ci/enterprise-fork-v1.md.  Each job appears twice
+# for the reason validate.yml records: a container's `credentials` block cannot be conditional, so
+# the condition moves to the job.  Both shapes share their steps through `.github/actions/*`.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  release:
+    types: [published]
+
+permissions:
+  contents: write  # required to attach assets to the release
+
+jobs:
+  quality:
+    if: vars.AART_IMAGE_USERNAME_SECRET == ''
+    runs-on: ${{ fromJSON(vars.AART_RUNNER || '["ubuntu-latest"]') }}
+    container: ${{ vars.AART_CI_IMAGE }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(vars.AART_PYTHON_VERSIONS || '["3.10", "3.14"]') }}
+    env:
+      AART_INDEX_URL: ${{ vars.AART_PIP_INDEX_URL || 'https://pypi.org/simple' }}
+      AART_INDEX_CREDENTIALS: ${{ secrets[vars.AART_PIP_INDEX_CREDENTIALS_SECRET] }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: ./.github/actions/quality
+        with:
+          python: ${{ vars.AART_PYTHON || 'python' }}
+          python-version: ${{ matrix.python-version }}
+          setup-python: ${{ vars.AART_CI_IMAGE == '' }}
+
+  quality-private-image:
+    if: vars.AART_IMAGE_USERNAME_SECRET != ''
+    runs-on: ${{ fromJSON(vars.AART_RUNNER || '["ubuntu-latest"]') }}
+    container:
+      image: ${{ vars.AART_CI_IMAGE }}
+      credentials:
+        username: ${{ secrets[vars.AART_IMAGE_USERNAME_SECRET] }}
+        password: ${{ secrets[vars.AART_IMAGE_PASSWORD_SECRET] }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(vars.AART_PYTHON_VERSIONS || '["3.10", "3.14"]') }}
+    env:
+      AART_INDEX_URL: ${{ vars.AART_PIP_INDEX_URL || 'https://pypi.org/simple' }}
+      AART_INDEX_CREDENTIALS: ${{ secrets[vars.AART_PIP_INDEX_CREDENTIALS_SECRET] }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: ./.github/actions/quality
+        with:
+          python: ${{ vars.AART_PYTHON || 'python' }}
+          python-version: ${{ matrix.python-version }}
+          setup-python: ${{ vars.AART_CI_IMAGE == '' }}
+
+  release:
+    needs: [quality, quality-private-image]
+    if: ${{ !cancelled() && !failure() && vars.AART_IMAGE_USERNAME_SECRET == '' }}
+    runs-on: ${{ fromJSON(vars.AART_RUNNER || '["ubuntu-latest"]') }}
+    container: ${{ vars.AART_CI_IMAGE }}
+    env:
+      AART_INDEX_URL: ${{ vars.AART_PIP_INDEX_URL || 'https://pypi.org/simple' }}
+      AART_INDEX_CREDENTIALS: ${{ secrets[vars.AART_PIP_INDEX_CREDENTIALS_SECRET] }}
+      # The release checklist reconciles against a real registry checkout.  A fork points this at
+      # the registry it actually publishes, which is not this project's reference registry.
+      REFERENCE_REGISTRY_URL: ${{ vars.AART_REFERENCE_REGISTRY_URL || 'https://github.com/M1F1/agent-artifacts-registry.git' }}
+      # `gh` talks to github.com unless told otherwise; on GHES it needs the instance hostname.
+      GH_HOST: ${{ vars.AART_GH_HOST || 'github.com' }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/release
+        with:
+          python: ${{ vars.AART_PYTHON || 'python' }}
+          python-version: ${{ vars.AART_RELEASE_PYTHON_VERSION || '3.11' }}
+          setup-python: ${{ vars.AART_CI_IMAGE == '' }}
+          tag: ${{ github.event.release.tag_name || github.ref_name }}
+
+  release-private-image:
+    needs: [quality, quality-private-image]
+    if: ${{ !cancelled() && !failure() && vars.AART_IMAGE_USERNAME_SECRET != '' }}
+    runs-on: ${{ fromJSON(vars.AART_RUNNER || '["ubuntu-latest"]') }}
+    container:
+      image: ${{ vars.AART_CI_IMAGE }}
+      credentials:
+        username: ${{ secrets[vars.AART_IMAGE_USERNAME_SECRET] }}
+        password: ${{ secrets[vars.AART_IMAGE_PASSWORD_SECRET] }}
+    env:
+      AART_INDEX_URL: ${{ vars.AART_PIP_INDEX_URL || 'https://pypi.org/simple' }}
+      AART_INDEX_CREDENTIALS: ${{ secrets[vars.AART_PIP_INDEX_CREDENTIALS_SECRET] }}
+      REFERENCE_REGISTRY_URL: ${{ vars.AART_REFERENCE_REGISTRY_URL || 'https://github.com/M1F1/agent-artifacts-registry.git' }}
+      GH_HOST: ${{ vars.AART_GH_HOST || 'github.com' }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/release
+        with:
+          python: ${{ vars.AART_PYTHON || 'python' }}
+          python-version: ${{ vars.AART_RELEASE_PYTHON_VERSION || '3.11' }}
+          setup-python: ${{ vars.AART_CI_IMAGE == '' }}
+          tag: ${{ github.event.release.tag_name || github.ref_name }}
